@@ -55,12 +55,17 @@ interface OptimizationResult {
 
 interface PromptAnalysis {
   strengthScore: number;
+  clarityScore: number;
+  specificityScore: number;
+  structureScore: number;
   weaknesses: string[];
   category: string;
   confidence: number;
   improvements: string[];
   tokenCount: number;
   readabilityScore: number;
+  missingElements: string[];
+  detectedElements: string[];
 }
 
 interface PromptTemplate {
@@ -187,50 +192,304 @@ const Index = () => {
     return () => clearTimeout(debounceTimer);
   }, [originalPrompt]);
 
+  // Intelligent Analysis Functions
+  const analyzeClarityScore = (prompt: string): number => {
+    let score = 10;
+    const words = prompt.toLowerCase().split(/\s+/);
+    
+    // Detect vague words
+    const vageWords = ['something', 'stuff', 'things', 'good', 'bad', 'nice', 'great', 'awesome', 'terrible'];
+    const vaguenessCount = words.filter(word => vageWords.includes(word)).length;
+    score -= vaguenessCount * 1.5;
+    
+    // Check sentence structure
+    const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const avgSentenceLength = words.length / sentences.length;
+    if (avgSentenceLength > 25) score -= 1; // Too long sentences
+    if (avgSentenceLength < 5) score -= 2; // Too short sentences
+    
+    // Check for unclear pronouns
+    const unclearPronouns = ['it', 'this', 'that', 'these', 'those'];
+    const pronounCount = words.filter(word => unclearPronouns.includes(word)).length;
+    if (pronounCount > words.length * 0.05) score -= 1;
+    
+    return Math.max(1, Math.min(10, Math.round(score)));
+  };
+
+  const analyzeSpecificityScore = (prompt: string): number => {
+    let score = 5; // Start at middle
+    const text = prompt.toLowerCase();
+    
+    // Check for numbers and specific metrics
+    const numberMatches = prompt.match(/\b\d+(\.\d+)?\b/g);
+    if (numberMatches && numberMatches.length > 0) score += 2;
+    
+    // Check for specific quantities
+    const quantifiers = ['how many', 'what percentage', 'exactly', 'precisely', 'specifically'];
+    quantifiers.forEach(q => {
+      if (text.includes(q)) score += 1;
+    });
+    
+    // Check for technical terms and domain-specific language
+    const technicalPatterns = [/\b[A-Z]{2,}\b/, /\b\w+\.\w+\b/, /\b\w+_\w+\b/];
+    technicalPatterns.forEach(pattern => {
+      if (pattern.test(prompt)) score += 0.5;
+    });
+    
+    // Penalize vague adjectives
+    const vagueAdjectives = ['some', 'many', 'few', 'several', 'various', 'multiple'];
+    vagueAdjectives.forEach(adj => {
+      if (text.includes(adj)) score -= 0.5;
+    });
+    
+    // Reward precise descriptors
+    const preciseDescriptors = ['detailed', 'comprehensive', 'thorough', 'specific', 'exact'];
+    preciseDescriptors.forEach(desc => {
+      if (text.includes(desc)) score += 1;
+    });
+    
+    return Math.max(1, Math.min(10, Math.round(score)));
+  };
+
+  const analyzeStructureScore = (prompt: string): number => {
+    let score = 3; // Start low
+    
+    // Check for existing formatting
+    const hasBulletPoints = /[•\-\*]\s/.test(prompt);
+    const hasNumberedList = /\b\d+\.\s/.test(prompt);
+    const hasSections = /\n\s*\n/.test(prompt);
+    
+    if (hasBulletPoints || hasNumberedList) score += 2;
+    if (hasSections) score += 1;
+    
+    // Check for logical flow indicators
+    const flowIndicators = ['first', 'then', 'next', 'finally', 'therefore', 'however', 'additionally'];
+    const flowCount = flowIndicators.filter(indicator => prompt.toLowerCase().includes(indicator)).length;
+    score += Math.min(flowCount, 3);
+    
+    // Check for role definitions
+    const rolePatterns = ['act as', 'you are a', 'pretend to be', 'imagine you\'re'];
+    const hasRole = rolePatterns.some(pattern => prompt.toLowerCase().includes(pattern));
+    if (hasRole) score += 2;
+    
+    // Check for output format requests
+    const formatRequests = ['provide a list', 'write a paragraph', 'create a table', 'format as', 'structure'];
+    const hasFormat = formatRequests.some(req => prompt.toLowerCase().includes(req));
+    if (hasFormat) score += 2;
+    
+    return Math.max(1, Math.min(10, Math.round(score)));
+  };
+
+  // Element Detection System
+  const hasContext = (prompt: string): boolean => {
+    const contextKeywords = ['background', 'context', 'situation', 'scenario', 'given that', 'assuming'];
+    return contextKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+  };
+
+  const hasRole = (prompt: string): boolean => {
+    const rolePatterns = ['act as', 'you are a', 'pretend to be', 'imagine you\'re', 'as a', 'role of'];
+    return rolePatterns.some(pattern => prompt.toLowerCase().includes(pattern));
+  };
+
+  const hasFormat = (prompt: string): boolean => {
+    const formatKeywords = ['format', 'structure', 'organize', 'list', 'table', 'bullet points', 'numbered'];
+    return formatKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+  };
+
+  const hasExamples = (prompt: string): boolean => {
+    const exampleKeywords = ['such as', 'like', 'for example', 'e.g.', 'including', 'examples'];
+    return exampleKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+  };
+
+  const hasConstraints = (prompt: string): boolean => {
+    const constraintKeywords = ['must', 'should', 'required', 'limit', 'maximum', 'minimum', 'within'];
+    return constraintKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+  };
+
+  const hasOutput = (prompt: string): boolean => {
+    const outputKeywords = ['provide', 'generate', 'create', 'write', 'produce', 'return'];
+    return outputKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+  };
+
+  const detectMissingElements = (prompt: string, intent: string): string[] => {
+    const missing = [];
+    
+    if (!hasContext(prompt)) missing.push('context');
+    if (!hasRole(prompt) && ['creative', 'analysis', 'code'].includes(intent)) missing.push('role');
+    if (!hasFormat(prompt)) missing.push('format');
+    if (!hasExamples(prompt) && ['creative', 'marketing'].includes(intent)) missing.push('examples');
+    if (!hasConstraints(prompt)) missing.push('constraints');
+    if (!hasOutput(prompt)) missing.push('output_specification');
+    
+    return missing;
+  };
+
   const analyzePrompt = useCallback(async (prompt: string) => {
     setIsAnalyzing(true);
     
     // Simulate real-time analysis
     await new Promise(resolve => setTimeout(resolve, 800));
     
+    const clarityScore = analyzeClarityScore(prompt);
+    const specificityScore = analyzeSpecificityScore(prompt);
+    const structureScore = analyzeStructureScore(prompt);
+    const overallScore = Math.round((clarityScore + specificityScore + structureScore) / 3);
+    
+    const category = detectCategory(prompt);
+    const missingElements = detectMissingElements(prompt, selectedIntent);
+    const detectedElements = [];
+    
+    if (hasContext(prompt)) detectedElements.push('context');
+    if (hasRole(prompt)) detectedElements.push('role');
+    if (hasFormat(prompt)) detectedElements.push('format');
+    if (hasExamples(prompt)) detectedElements.push('examples');
+    if (hasConstraints(prompt)) detectedElements.push('constraints');
+    if (hasOutput(prompt)) detectedElements.push('output_specification');
+    
     const analysis: PromptAnalysis = {
-      strengthScore: Math.floor(Math.random() * 4) + 6, // 6-10 range
-      weaknesses: generateWeaknesses(prompt),
-      category: detectCategory(prompt),
-      confidence: Math.floor(Math.random() * 30) + 70, // 70-100 range
-      improvements: generateImprovements(prompt),
+      strengthScore: overallScore,
+      clarityScore,
+      specificityScore,
+      structureScore,
+      weaknesses: generateIntelligentWeaknesses(prompt, clarityScore, specificityScore, structureScore),
+      category,
+      confidence: calculateConfidence(prompt, category),
+      improvements: generateSmartImprovements(missingElements, selectedIntent),
       tokenCount: Math.ceil(prompt.length / 4),
-      readabilityScore: Math.floor(Math.random() * 30) + 70
+      readabilityScore: Math.round((clarityScore + structureScore) / 2),
+      missingElements,
+      detectedElements
     };
     
     setPromptAnalysis(analysis);
     setIsAnalyzing(false);
-  }, []);
+  }, [selectedIntent]);
 
-  const generateWeaknesses = (prompt: string): string[] => {
+  const generateIntelligentWeaknesses = (prompt: string, clarityScore: number, specificityScore: number, structureScore: number): string[] => {
     const weaknesses = [];
-    if (prompt.length < 50) weaknesses.push('Too vague');
-    if (!prompt.includes('?') && !prompt.includes('example')) weaknesses.push('Missing context');
-    if (prompt.split(' ').length < 10) weaknesses.push('Unclear intent');
-    if (!prompt.includes('specific') && !prompt.includes('detail')) weaknesses.push('Needs specificity');
+    
+    if (clarityScore < 5) weaknesses.push('Contains vague or unclear language');
+    if (specificityScore < 5) weaknesses.push('Lacks specific details and requirements');
+    if (structureScore < 5) weaknesses.push('Poor organization and structure');
+    if (prompt.length < 50) weaknesses.push('Too brief - needs more context');
+    if (!hasRole(prompt)) weaknesses.push('Missing clear role or perspective');
+    if (!hasOutput(prompt)) weaknesses.push('Unclear about desired output format');
+    
     return weaknesses.slice(0, 3);
   };
 
-  const detectCategory = (prompt: string): string => {
-    if (prompt.toLowerCase().includes('code') || prompt.toLowerCase().includes('function')) return 'Code Generation';
-    if (prompt.toLowerCase().includes('analyze') || prompt.toLowerCase().includes('data')) return 'Analysis';
-    if (prompt.toLowerCase().includes('write') || prompt.toLowerCase().includes('story')) return 'Creative Writing';
-    if (prompt.toLowerCase().includes('summarize') || prompt.toLowerCase().includes('summary')) return 'Summarization';
-    return 'General';
+  const calculateConfidence = (prompt: string, category: string): number => {
+    let confidence = 70; // Base confidence
+    
+    // Increase confidence based on category-specific keywords
+    const keywords = {
+      'Code Generation': ['function', 'class', 'method', 'algorithm', 'programming'],
+      'Analysis': ['analyze', 'examine', 'evaluate', 'assess', 'data'],
+      'Creative Writing': ['story', 'character', 'narrative', 'creative', 'write'],
+      'Summarization': ['summarize', 'summary', 'brief', 'overview', 'key points']
+    };
+    
+    const categoryKeywords = keywords[category as keyof typeof keywords] || [];
+    const matchCount = categoryKeywords.filter(keyword => 
+      prompt.toLowerCase().includes(keyword)
+    ).length;
+    
+    confidence += matchCount * 5;
+    return Math.min(100, confidence);
   };
 
-  const generateImprovements = (prompt: string): string[] => {
-    return [
-      'Add specific context and examples',
-      'Define output format clearly',
-      'Include success criteria',
-      'Specify target audience'
-    ];
+  const generateSmartImprovements = (missingElements: string[], intent: string): string[] => {
+    const improvements = [];
+    
+    missingElements.forEach(element => {
+      switch (element) {
+        case 'context':
+          improvements.push('Enhanced specificity by adding contextual background');
+          break;
+        case 'role':
+          improvements.push('Added expert role perspective for better response quality');
+          break;
+        case 'format':
+          improvements.push('Improved structure with clear output formatting requirements');
+          break;
+        case 'examples':
+          improvements.push('Included example requirements for better clarity');
+          break;
+        case 'constraints':
+          improvements.push('Added constraint guidance to prevent off-topic responses');
+          break;
+        case 'output_specification':
+          improvements.push('Clarified desired output type and structure');
+          break;
+      }
+    });
+    
+    // Intent-specific improvements
+    if (intent === 'creative') {
+      improvements.push('Enhanced creative direction with style guidance');
+    } else if (intent === 'code') {
+      improvements.push('Added technical specifications and best practices requirements');
+    } else if (intent === 'analysis') {
+      improvements.push('Specified analytical framework and evidence requirements');
+    }
+    
+    return improvements.slice(0, 5);
+  };
+
+  const detectCategory = (prompt: string): string => {
+    const text = prompt.toLowerCase();
+    
+    // More sophisticated category detection
+    const categoryScores = {
+      'Code Generation': 0,
+      'Data Analysis': 0,
+      'Creative Writing': 0,
+      'Summarization': 0,
+      'Research': 0,
+      'Marketing': 0,
+      'General': 1
+    };
+    
+    // Code Generation indicators
+    if (text.includes('code') || text.includes('function') || text.includes('algorithm') || 
+        text.includes('programming') || text.includes('script') || text.includes('api')) {
+      categoryScores['Code Generation'] += 3;
+    }
+    
+    // Data Analysis indicators
+    if (text.includes('analyze') || text.includes('data') || text.includes('statistics') || 
+        text.includes('metrics') || text.includes('insights') || text.includes('trends')) {
+      categoryScores['Data Analysis'] += 3;
+    }
+    
+    // Creative Writing indicators
+    if (text.includes('story') || text.includes('character') || text.includes('narrative') || 
+        text.includes('creative') || text.includes('write') || text.includes('novel')) {
+      categoryScores['Creative Writing'] += 3;
+    }
+    
+    // Summarization indicators
+    if (text.includes('summarize') || text.includes('summary') || text.includes('brief') || 
+        text.includes('overview') || text.includes('key points')) {
+      categoryScores['Summarization'] += 3;
+    }
+    
+    // Research indicators
+    if (text.includes('research') || text.includes('study') || text.includes('findings') || 
+        text.includes('literature') || text.includes('academic')) {
+      categoryScores['Research'] += 3;
+    }
+    
+    // Marketing indicators
+    if (text.includes('marketing') || text.includes('campaign') || text.includes('brand') || 
+        text.includes('audience') || text.includes('sales')) {
+      categoryScores['Marketing'] += 3;
+    }
+    
+    // Return category with highest score
+    return Object.entries(categoryScores).reduce((a, b) => 
+      categoryScores[a[0] as keyof typeof categoryScores] > categoryScores[b[0] as keyof typeof categoryScores] ? a : b
+    )[0];
   };
 
   const optimizePrompt = async () => {
@@ -297,26 +556,140 @@ const Index = () => {
     }
   };
 
-  const generateOptimizedPrompt = (original: string, platform: string, tone: number): string => {
+  // Intelligent Optimization Engine
+  const intelligentOptimize = (originalPrompt: string, selectedIntent: string, selectedPlatform: string, tone: number): { optimized: string; improvements: string[]; scores: { before: number; after: number } } => {
+    const analysis = promptAnalysis;
+    if (!analysis) {
+      // Fallback if no analysis available
+      return {
+        optimized: originalPrompt,
+        improvements: ['Analysis not available'],
+        scores: { before: 5, after: 5 }
+      };
+    }
+
+    const missingElements = analysis.missingElements;
+    let optimized = originalPrompt;
+    const improvements: string[] = [];
+    
+    // Only add elements that are actually missing and beneficial
     const toneText = tone < 33 ? 'casual and friendly' : tone < 66 ? 'professional and clear' : 'technical and precise';
     
-    return `${original}
+    // Add missing context if needed
+    if (missingElements.includes('context') && selectedIntent !== 'general') {
+      const contextAddition = getContextForIntent(selectedIntent);
+      optimized = `${contextAddition}\n\n${optimized}`;
+      improvements.push('Enhanced specificity by adding contextual background');
+    }
+    
+    // Add role if missing and beneficial for intent
+    if (missingElements.includes('role') && ['creative', 'analysis', 'code'].includes(selectedIntent)) {
+      const roleAddition = getRoleForIntent(selectedIntent);
+      optimized = `${roleAddition} ${optimized}`;
+      improvements.push('Added expert role perspective for better response quality');
+    }
+    
+    // Add format specification if missing
+    if (missingElements.includes('format')) {
+      const formatAddition = getFormatForIntent(selectedIntent);
+      optimized = `${optimized}\n\n${formatAddition}`;
+      improvements.push('Improved structure with clear output formatting requirements');
+    }
+    
+    // Add examples requirement if missing and appropriate
+    if (missingElements.includes('examples') && ['creative', 'marketing'].includes(selectedIntent)) {
+      optimized = `${optimized}\n\nPlease include specific examples and practical demonstrations.`;
+      improvements.push('Included example requirements for better clarity');
+    }
+    
+    // Add constraints if missing
+    if (missingElements.includes('constraints')) {
+      const constraintAddition = getConstraintsForIntent(selectedIntent, toneText);
+      optimized = `${optimized}\n\n${constraintAddition}`;
+      improvements.push('Added constraint guidance to prevent off-topic responses');
+    }
+    
+    // Add output specification if missing
+    if (missingElements.includes('output_specification')) {
+      const outputAddition = getOutputSpecForIntent(selectedIntent);
+      optimized = `${optimized}\n\n${outputAddition}`;
+      improvements.push('Clarified desired output type and structure');
+    }
+    
+    // Platform-specific optimizations
+    if (selectedPlatform !== 'general') {
+      optimized = `${optimized}\n\nOptimize response for ${selectedPlatform} platform characteristics.`;
+      improvements.push(`Added ${selectedPlatform}-specific optimization guidance`);
+    }
+    
+    // Calculate real before/after scores
+    const beforeScore = analysis.strengthScore;
+    const afterScore = Math.min(10, beforeScore + improvements.length * 0.8);
+    
+    return {
+      optimized: optimized.trim(),
+      improvements,
+      scores: { before: beforeScore, after: Math.round(afterScore) }
+    };
+  };
 
-Context: Provide detailed and specific information tailored for ${platform}.
-Format: Structure your response clearly with examples and actionable insights.
-Tone: Maintain a ${toneText} tone throughout your response.
-Goal: Ensure the output is comprehensive, accurate, and immediately useful.
-Constraints: Include relevant details and avoid unnecessary complexity.`;
+  // Helper functions for intelligent optimization
+  const getContextForIntent = (intent: string): string => {
+    const contexts = {
+      'creative': 'Context: You are working on a creative project that requires originality and engaging content.',
+      'analysis': 'Context: This is a professional analysis requiring evidence-based insights and data-driven conclusions.',
+      'code': 'Context: This is a technical development task requiring clean, maintainable, and well-documented code.',
+      'marketing': 'Context: This is a marketing initiative focused on audience engagement and conversion.',
+      'research': 'Context: This is an academic or professional research task requiring thorough investigation.'
+    };
+    return contexts[intent as keyof typeof contexts] || '';
+  };
+
+  const getRoleForIntent = (intent: string): string => {
+    const roles = {
+      'creative': 'Act as an experienced creative writer and storyteller.',
+      'analysis': 'Act as a senior data analyst with expertise in statistical analysis.',
+      'code': 'Act as a senior software engineer with expertise in best practices.',
+      'marketing': 'Act as a marketing expert with deep understanding of consumer psychology.',
+      'research': 'Act as a research specialist with academic rigor.'
+    };
+    return roles[intent as keyof typeof roles] || '';
+  };
+
+  const getFormatForIntent = (intent: string): string => {
+    const formats = {
+      'creative': 'Format: Structure your response with clear narrative elements, vivid descriptions, and engaging flow.',
+      'analysis': 'Format: Organize findings with executive summary, key insights, supporting data, and actionable recommendations.',
+      'code': 'Format: Provide clean code with comments, documentation, and usage examples.',
+      'marketing': 'Format: Structure with compelling headline, key benefits, target audience considerations, and clear call-to-action.',
+      'research': 'Format: Present with clear methodology, findings, analysis, and conclusions with proper citations.'
+    };
+    return formats[intent as keyof typeof formats] || 'Format: Structure your response clearly with logical organization and easy readability.';
+  };
+
+  const getConstraintsForIntent = (intent: string, tone: string): string => {
+    return `Constraints: Maintain a ${tone} tone, ensure accuracy, and focus specifically on the requested topic without unnecessary tangents.`;
+  };
+
+  const getOutputSpecForIntent = (intent: string): string => {
+    const outputs = {
+      'creative': 'Output: Provide creative content that is original, engaging, and appropriate for the specified medium.',
+      'analysis': 'Output: Deliver actionable insights with supporting evidence and clear recommendations.',
+      'code': 'Output: Generate production-ready code with proper error handling and documentation.',
+      'marketing': 'Output: Create persuasive content optimized for the target audience and conversion.',
+      'research': 'Output: Provide comprehensive research findings with proper academic standards.'
+    };
+    return outputs[intent as keyof typeof outputs] || 'Output: Provide a comprehensive and useful response that directly addresses the request.';
+  };
+
+  const generateOptimizedPrompt = (original: string, platform: string, tone: number): string => {
+    const optimizationResult = intelligentOptimize(original, selectedIntent, platform, tone);
+    return optimizationResult.optimized;
   };
 
   const generateDetailedImprovements = (original: string, optimized: string): string[] => {
-    return [
-      'Enhanced clarity with specific context',
-      'Added platform-specific optimization',
-      'Improved structure with clear formatting',
-      'Included tone and style guidelines',
-      'Added success criteria and constraints'
-    ];
+    const optimizationResult = intelligentOptimize(original, selectedIntent, selectedPlatform, toneLevel[0]);
+    return optimizationResult.improvements;
   };
 
   const copyToClipboard = (text: string) => {
@@ -692,51 +1065,149 @@ Please provide a technical, detailed response with specific implementations and 
                     {isAnalyzing && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary ml-2" />}
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Strength Score */}
-                    <div className="text-center">
-                      <div className="relative w-24 h-24 mx-auto mb-4">
-                        <div className="absolute inset-0 rounded-full bg-gradient-primary opacity-20" />
-                        <div className="absolute inset-2 rounded-full bg-background flex items-center justify-center">
-                          <span className="text-2xl font-bold text-primary">
-                            {promptAnalysis.strengthScore}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-sm text-muted-foreground">Prompt Strength</p>
-                    </div>
+                 <CardContent>
+                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                     {/* Overall Strength Score */}
+                     <div className="text-center">
+                       <div className="relative w-24 h-24 mx-auto mb-4">
+                         <div className="absolute inset-0 rounded-full bg-gradient-primary opacity-20" />
+                         <div className="absolute inset-2 rounded-full bg-background flex items-center justify-center">
+                           <span className="text-2xl font-bold text-primary">
+                             {promptAnalysis.strengthScore}
+                           </span>
+                         </div>
+                         <div className="absolute inset-0">
+                           <svg className="w-full h-full transform -rotate-90">
+                             <circle
+                               cx="50%"
+                               cy="50%"
+                               r="45%"
+                               fill="none"
+                               stroke="currentColor"
+                               strokeWidth="2"
+                               className="text-muted opacity-20"
+                             />
+                             <circle
+                               cx="50%"
+                               cy="50%"
+                               r="45%"
+                               fill="none"
+                               stroke="url(#gradient)"
+                               strokeWidth="3"
+                               strokeLinecap="round"
+                               strokeDasharray={`${(promptAnalysis.strengthScore / 10) * 2 * Math.PI * 45} ${2 * Math.PI * 45}`}
+                               className="transition-all duration-1000"
+                             />
+                           </svg>
+                         </div>
+                       </div>
+                       <p className="text-sm text-muted-foreground font-medium">Overall Score</p>
+                     </div>
 
-                    {/* Detected Issues */}
-                    <div>
-                      <h4 className="font-semibold mb-3 text-center">Detected Issues</h4>
-                      <div className="space-y-2">
-                        {promptAnalysis.weaknesses.map((weakness, index) => (
-                          <div key={index} className="flex items-center gap-2 text-sm">
-                            <AlertCircle className="w-4 h-4 text-warning" />
-                            {weakness}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                     {/* Detailed Scores */}
+                     <div className="space-y-4">
+                       <h4 className="font-semibold text-center mb-3">Analysis Breakdown</h4>
+                       
+                       <div className="space-y-3">
+                         <div>
+                           <div className="flex justify-between text-sm mb-1">
+                             <span>Clarity</span>
+                             <span className="font-medium">{promptAnalysis.clarityScore}/10</span>
+                           </div>
+                           <Progress value={promptAnalysis.clarityScore * 10} className="h-2" />
+                         </div>
+                         
+                         <div>
+                           <div className="flex justify-between text-sm mb-1">
+                             <span>Specificity</span>
+                             <span className="font-medium">{promptAnalysis.specificityScore}/10</span>
+                           </div>
+                           <Progress value={promptAnalysis.specificityScore * 10} className="h-2" />
+                         </div>
+                         
+                         <div>
+                           <div className="flex justify-between text-sm mb-1">
+                             <span>Structure</span>
+                             <span className="font-medium">{promptAnalysis.structureScore}/10</span>
+                           </div>
+                           <Progress value={promptAnalysis.structureScore * 10} className="h-2" />
+                         </div>
+                       </div>
+                     </div>
 
-                    {/* Category Detection */}
-                    <div className="text-center">
-                      <Badge variant="secondary" className="mb-2">
-                        {promptAnalysis.category}
-                      </Badge>
-                      <p className="text-sm text-muted-foreground">
-                        {promptAnalysis.confidence}% confidence
-                      </p>
-                      <div className="w-full bg-muted rounded-full h-2 mt-2">
-                        <div 
-                          className="bg-gradient-primary h-2 rounded-full transition-all duration-1000"
-                          style={{ width: `${promptAnalysis.confidence}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
+                     {/* Missing Elements */}
+                     <div>
+                       <h4 className="font-semibold mb-3 text-center">Missing Elements</h4>
+                       <div className="space-y-2">
+                         {promptAnalysis.missingElements.length > 0 ? (
+                           promptAnalysis.missingElements.map((element, index) => (
+                             <div key={index} className="flex items-center gap-2 text-sm">
+                               <AlertCircle className="w-4 h-4 text-warning" />
+                               <span className="capitalize">{element.replace('_', ' ')}</span>
+                             </div>
+                           ))
+                         ) : (
+                           <div className="flex items-center gap-2 text-sm text-success">
+                             <CheckCircle2 className="w-4 h-4" />
+                             <span>All elements present</span>
+                           </div>
+                         )}
+                       </div>
+                       
+                       {promptAnalysis.detectedElements.length > 0 && (
+                         <div className="mt-4">
+                           <p className="text-xs text-muted-foreground mb-2">Detected:</p>
+                           <div className="flex flex-wrap gap-1">
+                             {promptAnalysis.detectedElements.map((element, index) => (
+                               <Badge key={index} variant="secondary" className="text-xs">
+                                 {element.replace('_', ' ')}
+                               </Badge>
+                             ))}
+                           </div>
+                         </div>
+                       )}
+                     </div>
+
+                     {/* Category Detection */}
+                     <div className="text-center">
+                       <Badge variant="secondary" className="mb-3 text-sm px-3 py-1">
+                         {promptAnalysis.category}
+                       </Badge>
+                       <p className="text-sm text-muted-foreground mb-2">
+                         {promptAnalysis.confidence}% confidence
+                       </p>
+                       <div className="w-full bg-muted rounded-full h-2">
+                         <div 
+                           className="bg-gradient-primary h-2 rounded-full transition-all duration-1000"
+                           style={{ width: `${promptAnalysis.confidence}%` }}
+                         />
+                       </div>
+                       
+                       {/* Improvements Preview */}
+                       <div className="mt-4">
+                         <p className="text-xs text-muted-foreground mb-2">Potential Improvements:</p>
+                         <div className="text-xs space-y-1">
+                           {promptAnalysis.improvements.slice(0, 2).map((improvement, index) => (
+                             <div key={index} className="flex items-center gap-1">
+                               <Lightbulb className="w-3 h-3 text-primary" />
+                               <span className="text-left">{improvement}</span>
+                             </div>
+                           ))}
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                   
+                   {/* SVG Gradient Definition */}
+                   <svg width="0" height="0">
+                     <defs>
+                       <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                         <stop offset="0%" stopColor="hsl(var(--primary))" />
+                         <stop offset="100%" stopColor="hsl(var(--primary-glow))" />
+                       </linearGradient>
+                     </defs>
+                   </svg>
+                 </CardContent>
               </Card>
             </motion.div>
           )}
