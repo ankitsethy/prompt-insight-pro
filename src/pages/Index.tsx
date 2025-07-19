@@ -311,13 +311,13 @@ const Index = () => {
     return outputKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
   };
 
-  const detectMissingElements = (prompt: string, intent: string): string[] => {
+  const detectMissingElements = (prompt: string, intent?: string): string[] => {
     const missing = [];
     
     if (!hasContext(prompt)) missing.push('context');
-    if (!hasRole(prompt) && ['creative', 'analysis', 'code'].includes(intent)) missing.push('role');
+    if (!hasRole(prompt) && intent && ['creative', 'analysis', 'code'].includes(intent)) missing.push('role');
     if (!hasFormat(prompt)) missing.push('format');
-    if (!hasExamples(prompt) && ['creative', 'marketing'].includes(intent)) missing.push('examples');
+    if (!hasExamples(prompt) && intent && ['creative', 'marketing'].includes(intent)) missing.push('examples');
     if (!hasConstraints(prompt)) missing.push('constraints');
     if (!hasOutput(prompt)) missing.push('output_specification');
     
@@ -556,6 +556,23 @@ const Index = () => {
     }
   };
 
+  function shouldOptimize(analysis: PromptAnalysis): 'minimal' | 'targeted' | 'full' {
+    const overallScore = (analysis.clarityScore + analysis.specificityScore + analysis.structureScore) / 3;
+    
+    // If prompt scores 7+ overall, make minimal changes
+    if (overallScore >= 7) {
+      return 'minimal';
+    }
+    
+    // If prompt scores 5-6, make targeted improvements  
+    if (overallScore >= 5) {
+      return 'targeted';
+    }
+    
+    // If prompt scores below 5, full optimization
+    return 'full';
+  }
+
   // Intelligent Optimization Engine
   const intelligentOptimize = (originalPrompt: string, selectedIntent: string, selectedPlatform: string, tone: number): { optimized: string; improvements: string[]; scores: { before: number; after: number } } => {
     const analysis = promptAnalysis;
@@ -568,11 +585,98 @@ const Index = () => {
       };
     }
 
+    const optimizationLevel = shouldOptimize(analysis);
+    const originalScore = analysis.strengthScore;
     const missingElements = analysis.missingElements;
+    
     let optimized = originalPrompt;
     const improvements: string[] = [];
     
-    // Only add elements that are actually missing and beneficial
+    // High quality prompts need minimal/no changes
+    if (optimizationLevel === 'minimal' && originalScore >= 8) {
+      return {
+        optimized: originalPrompt,
+        improvements: ["Prompt is already well-structured with clear requirements"],
+        scores: { before: originalScore, after: originalScore }
+      };
+    }
+    
+    // For high quality prompts, make only critical improvements
+    if (optimizationLevel === 'minimal') {
+      const criticalMissing = missingElements.filter(element => 
+        (element === 'examples' && ['creative', 'marketing'].includes(selectedIntent)) ||
+        (element === 'output_specification' && !hasOutput(originalPrompt))
+      );
+      
+      if (criticalMissing.length === 0) {
+        improvements.push("Minor enhancements applied to already strong prompt structure");
+        return {
+          optimized: originalPrompt,
+          improvements,
+          scores: { before: originalScore, after: originalScore }
+        };
+      }
+      
+      // Only add truly missing critical elements
+      criticalMissing.forEach(element => {
+        if (element === 'examples' && ['creative', 'marketing'].includes(selectedIntent)) {
+          optimized = `${optimized}\n\nInclude specific examples and practical demonstrations.`;
+          improvements.push('Added specific example requirements for enhanced clarity');
+        }
+        if (element === 'output_specification' && !hasOutput(originalPrompt)) {
+          optimized = `${optimized}\n\nProvide a comprehensive response that directly addresses this request.`;
+          improvements.push('Clarified desired output expectations');
+        }
+      });
+      
+      return {
+        optimized: optimized.trim(),
+        improvements,
+        scores: { before: originalScore, after: originalScore + 1 }
+      };
+    }
+    
+    // Targeted improvements for medium quality prompts
+    if (optimizationLevel === 'targeted') {
+      const priorityElements = ['role', 'format', 'examples'].filter(element => 
+        missingElements.includes(element)
+      );
+      
+      priorityElements.forEach(element => {
+        switch (element) {
+          case 'role':
+            if (['creative', 'analysis', 'code'].includes(selectedIntent)) {
+              const roleAddition = getRoleForIntent(selectedIntent);
+              optimized = `${roleAddition} ${optimized}`;
+              improvements.push('Added expert role perspective for enhanced response quality');
+            }
+            break;
+          case 'format':
+            const formatAddition = getFormatForIntent(selectedIntent);
+            optimized = `${optimized}\n\n${formatAddition}`;
+            improvements.push('Enhanced structure with targeted output formatting');
+            break;
+          case 'examples':
+            if (['creative', 'marketing'].includes(selectedIntent)) {
+              optimized = `${optimized}\n\nInclude specific tool names, pricing models, and real-world use case examples.`;
+              improvements.push('Requested specific examples and practical demonstrations');
+            }
+            break;
+        }
+      });
+      
+      if (improvements.length === 0) {
+        improvements.push("Applied targeted enhancements to improve prompt effectiveness");
+      }
+      
+      return {
+        optimized: optimized.trim(),
+        improvements,
+        scores: { before: originalScore, after: Math.min(10, originalScore + 2) }
+      };
+    }
+    
+    // Full optimization for low quality prompts only
     const toneText = tone < 33 ? 'casual and friendly' : tone < 66 ? 'professional and clear' : 'technical and precise';
     
     // Add missing context if needed
@@ -616,20 +720,13 @@ const Index = () => {
       improvements.push('Clarified desired output type and structure');
     }
     
-    // Platform-specific optimizations
-    if (selectedPlatform !== 'general') {
-      optimized = `${optimized}\n\nOptimize response for ${selectedPlatform} platform characteristics.`;
-      improvements.push(`Added ${selectedPlatform}-specific optimization guidance`);
-    }
-    
     // Calculate real before/after scores
-    const beforeScore = analysis.strengthScore;
-    const afterScore = Math.min(10, beforeScore + improvements.length * 0.8);
+    const afterScore = Math.min(10, originalScore + improvements.length * 0.8);
     
     return {
       optimized: optimized.trim(),
       improvements,
-      scores: { before: beforeScore, after: Math.round(afterScore) }
+      scores: { before: originalScore, after: Math.round(afterScore) }
     };
   };
 
