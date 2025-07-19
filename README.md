@@ -242,12 +242,7 @@ Update colors and styles in `src/index.css` and `tailwind.config.ts`:
 }
 ```
 
-## 🚀 Deployment
 
-### Deploy with Lovable
-1. Click the **Publish** button in Lovable
-2. Your app will be live with a custom URL
-3. Connect a custom domain in settings
 
 ### Deploy Elsewhere
 ```bash
@@ -269,7 +264,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Built with [Lovable](https://lovable.dev) - The fastest way to build web apps
+
 - UI components from [shadcn/ui](https://ui.shadcn.com/)
 - Icons from [Lucide React](https://lucide.dev/)
 - Powered by [OpenAI API](https://openai.com/api/)
